@@ -14,7 +14,9 @@ import play.Logger;
 import play.libs.Json;
 
 public class MoveShipsHTTPActor extends AbstractActor {
-    final Http http = Http.get(context().system());
+    private final Http http = Http.get(context().system());
+    private final float alpha = 0.1f;
+    private final float inversedAlpha = (1.0f - alpha);
 
     public static Props props() {
         return Props.create(MoveShipsHTTPActor.class);
@@ -37,45 +39,54 @@ public class MoveShipsHTTPActor extends AbstractActor {
 
             if (httpResponse.status().intValue() != 200)
                 Logger.error("Problem whilst getting all ships");
-            final float alpha = 0.1f;
-            final float inversedAlpha = (1.0f - alpha);
 
-            httpResponse.entity().toStrict(10000, actorMaterializer)
-                    .thenApply(entity ->
-                            entity.getData().utf8String())
-                    .thenApply(body -> {
-
-                        JsonNode parsedBody = Json.parse(body);
-                        for (JsonNode jsonNode : parsedBody) {
-                            String id = jsonNode.get("id").asText();
-                            int yPos = jsonNode.get("yPos").asInt();
-                            int xPos = jsonNode.get("xPos").asInt();
-                            int xDestination = jsonNode.get("xDestination").asInt();
-                            int yDestination = jsonNode.get("yDestination").asInt();
-
-                            if (xPos == xDestination && yPos == yDestination) break;
-
-                            xPos = (int) (((float) xPos * inversedAlpha) + ((float) xDestination * alpha));
-                            yPos = (int) (((float) yPos * inversedAlpha) + ((float) yDestination * alpha));
-
-
-                            String json = "{ \"xDest\":\"" + xPos + "\", \"yDest\":\"" + yPos + "\" }";
-
-                            try {
-                                http.singleRequest(HttpRequest.PATCH("http://localhost:3000/ships/" + jsonNode.get("id").asText())
-                                        .withEntity(
-                                                HttpEntities.create(ContentTypes.APPLICATION_JSON, json)
-                                        ));
-                            } catch (Exception e) {
-                                e.printStackTrace();
-                            }
-                        }
-                        return "";
-                    });
+            handleHTTPResponse(actorMaterializer, httpResponse);
 
         } catch (Exception e) {
             Logger.error(e.getMessage(), e);
         }
         self().tell(PoisonPill.getInstance(), self());
+    }
+
+    private void handleHTTPResponse(ActorMaterializer actorMaterializer, HttpResponse httpResponse) {
+        httpResponse.entity().toStrict(10000, actorMaterializer)
+                .thenApply(entity ->
+                        entity.getData().utf8String())
+                .thenApply(body -> {
+
+                    JsonNode parsedBody = Json.parse(body);
+                    for (JsonNode jsonNode : parsedBody) {
+                        String json = getJsonFromResponseNode(jsonNode);
+
+                        if (json == null) break;
+
+                        try {
+                            http.singleRequest(HttpRequest.PATCH("http://localhost:3000/ships/" + jsonNode.get("id").asText())
+                                    .withEntity(
+                                            HttpEntities.create(ContentTypes.APPLICATION_JSON, json)
+                                    ));
+                        } catch (Exception e) {
+                            e.printStackTrace();
+                        }
+                    }
+                    return "";
+                });
+    }
+
+    private String getJsonFromResponseNode(JsonNode jsonNode) {
+        String id = jsonNode.get("id").asText();
+        int yPos = jsonNode.get("yPos").asInt();
+        int xPos = jsonNode.get("xPos").asInt();
+        int xDestination = jsonNode.get("xDestination").asInt();
+        int yDestination = jsonNode.get("yDestination").asInt();
+
+        if (xPos == xDestination && yPos == yDestination) return null;
+
+        xPos = (int) (((float) xPos * inversedAlpha) + ((float) xDestination * alpha));
+        yPos = (int) (((float) yPos * inversedAlpha) + ((float) yDestination * alpha));
+
+        String json = "{ \"xDest\":\"" + xPos + "\", \"yDest\":\"" + yPos + "\" }";
+
+        return json;
     }
 }
